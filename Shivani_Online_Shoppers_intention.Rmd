@@ -1,0 +1,332 @@
+## November 5, 2020
+## R script for data preprocessing and model formulation
+## Categorical outcome
+## Models - Logistic Reg, Classification Tree, KNN for classification
+
+## Remove existing objects and Garbage collection
+rm( list = ls() ); gc()
+
+## Load the required libraries
+library(rpart); library(rpart.plot) #For decision tree
+library(fastDummies)                #For dummy variables
+library(ggplot2)                    #For visualization
+library(Amelia)                     #Missing data operations
+library(corrplot)                   #Correlation matrix and plots
+library(plyr); library(dplyr)       #For transformations
+library(caret)                      #Provides a set of functions for classification and reg.
+library(randomForest)               #For random forest function
+
+## Set working directory and Read data file
+getwd()
+setwd('C:\\Users\\Sonu\\Desktop\\Shivani\\Fall_2020\\ISDS_574\\Project\\')
+dat1 = read.csv('online_shoppers_intention_UCI.csv', header = TRUE, sep = ",", stringsAsFactors=F, na.strings='')
+
+dim(dat1) # Get the no. of rows and columns in the dataset
+str(dat1)
+summary(dat1)
+
+## Check for missing data
+matrix.na = is.na(dat1)
+## Proportion of missing for columns and rows
+cmiss = colMeans(matrix.na)
+rmiss = rowMeans(matrix.na)
+## map missing values
+missmap(dat1) 
+
+## Keeping columns and rows whose missing value percentage is less than 20
+dat1 <- dat1[, cmiss < 0.2]
+dim(dat1)
+dat1 <- dat1[rmiss < 0.2, ]
+dim(dat1) ## No missing values in the data
+## There were no missing values in the dataset from UCI 
+
+## Copy the data to another data frame to performa ll operations
+dat2 <- dat1
+
+## Change Revenue variable from logical to numeric
+dat2$Revenue <- ifelse(dat2$Revenue == "FALSE",0,1)
+class(dat2$Revenue)
+hist(dat2$Revenue)
+table(dat2$Revenue)
+
+## Change wekeend from logical to numeric
+dat2$Weekend <- ifelse(dat2$Weekend == "FALSE", 0, 1) 
+class(dat2$Weekend)
+hist(dat2$Weekend)
+table(dat2$Weekend)
+
+## Create dummy variables for Month and Visitor Type
+dat2 = dummy_columns(dat2, select_columns = 'Month', remove_most_frequent_dummy = F)  
+dat2$Month = NULL
+dat2 = dummy_columns(dat2, select_columns = 'VisitorType', remove_most_frequent_dummy = F)  
+dat2$VisitorType = NULL
+
+
+## Check
+str(dat2)
+
+## Combining months into quarterly sections
+Quarter_1=(data.frame(dat2$Month_Feb+dat2$Month_Mar))
+Quarter_2=(data.frame(dat2$Month_May+dat2$Month_June))
+Quarter_3=(data.frame(dat2$Month_Jul+dat2$Month_Aug+dat2$Month_Sep))
+Quarter_4=(data.frame(dat2$Month_Oct+dat2$Month_Nov+dat2$Month_Dec))
+dat2=cbind(dat2,Quarter_1)
+dat2=cbind(dat2,Quarter_2)
+dat2=cbind(dat2,Quarter_3)
+dat2=cbind(dat2,Quarter_4)
+names(dat2)[names(dat2) == "dat2.Month_Feb...dat2.Month_Mar"] <- "Quarter_1"
+names(dat2)[names(dat2) == "dat2.Month_May...dat2.Month_June"] <- "Quarter_2"
+names(dat2)[names(dat2) == "dat2.Month_Jul...dat2.Month_Aug...dat2.Month_Sep"] <- "Quarter_3"
+names(dat2)[names(dat2) == "dat2.Month_Oct...dat2.Month_Nov...dat2.Month_Dec"] <- "Quarter_4"
+
+dat2$Month_Dec=NULL
+dat2$Month_Nov=NULL
+dat2$Month_Oct=NULL
+dat2$Month_Sep=NULL
+dat2$Month_Aug=NULL
+dat2$Month_Jul=NULL
+dat2$Month_June=NULL
+dat2$Month_May=NULL
+dat2$Month_Mar=NULL
+dat2$Month_Feb=NULL
+
+## Check
+str(dat2)
+
+## Check correlation between variables
+cplot <- cor(dat2)
+corrplot(cplot , method="circle", tl.cex = 0.6, tl.col = "DarkRed", diag = T)
+cor(dat2)
+
+## Check correlation between bounce rates and exit rates
+ggplot(data = dat1, mapping = aes(x = BounceRates, y = ExitRates)) +
+  geom_smooth(mapping = aes(x = BounceRates, y = ExitRates))+
+  geom_point(mapping = aes(x = BounceRates, y = ExitRates))+
+  ggtitle("Correlation between Exit rates and bounce rates") +
+  xlab("Bounce Rates") + ylab("Exit Rates")
+
+## Make Revenue vector as factor
+dat2$Revenue <- as.factor(dat2$Revenue)
+
+##Copy the data
+dat3 <- dat2
+
+## Remove exit rate column due to high correlation with bounce rate
+dat3$ExitRates=NULL
+
+## standardize numeric variables to have comparable scales.
+dat3[,1:9] = scale(dat3[,1:9])
+
+## Model 1 - Logistic regression begins here ##
+## Partition data into 80:20 training and test
+set.seed(1) 
+id.train = sample(1:nrow(dat3), nrow(dat3)*.8) 
+id.test = setdiff(1:nrow(dat3), id.train)
+dat.train = dat3[id.train,]
+dat.test = dat3[id.test,]
+
+min.model = glm(Revenue ~ 1, data = dat.train, family = 'binomial')
+max.model = glm(Revenue ~ ., data = dat.train, family = 'binomial')
+max.formula = formula(max.model)
+min.formula = formula(min.model)
+
+## Run the model with forward, backward and stepwise selection
+## Forward selection
+obj = step(min.model, direction='forward', scope=max.formula) # it will print out models in each step
+summary(obj) # it will give you the final model
+summary(obj)$coef[,1]
+oddsratio=exp(summary(obj)$coef[,1])
+oddsratio
+
+yhat = predict(obj, newdata = dat.test, type='response')
+hist(yhat)
+
+## Backward selection
+obj1 = step(max.model, direction='backward', scope=min.formula) # it will print out models in each step
+summary(obj1) # it will give you the final model
+
+yhat1 = predict(obj1, newdata = dat.test, type='response')
+hist(yhat1)
+
+## Stepwise selection
+obj2 = step(min.model, direction='both', scope=list(lower=min.formula,upper=max.formula)) # it will print out models in each step
+summary(obj2) # it will give you the final model
+
+yhat2 = predict(obj2, newdata = dat.test, type='response')
+hist(yhat2)
+
+
+dichotomize = function(yhat, cutoff=.5) {
+  out = rep(0, length(yhat))
+  out[yhat > cutoff] = 1
+  out
+}
+
+sen = function(ytrue, yhat) {
+  ind.true1 = which(ytrue == 1)
+  mean( ytrue[ind.true1] == yhat[ind.true1] )
+}
+
+spe = function(ytrue, yhat) {
+  ind.true0 = which(ytrue == 0)
+  mean( ytrue[ind.true0] == yhat[ind.true0] )
+}
+
+
+## Loop for different cutoffs for forward selection
+for(cutoff in c(0.1,0.2,0.3,0.4,0.5))
+{
+  yhat.class = dichotomize(yhat,cutoff )
+  err = mean(yhat.class != dat.test$Revenue) # misclassification error rate
+  print(paste((cutoff)))
+  print(err)
+  print(sen(dat.test$Revenue, yhat.class))
+  print(spe(dat.test$Revenue, yhat.class))
+  print(confusionMatrix(table(yhat.class,dat.test$Revenue), positive = "1"))
+}
+
+
+## Loop for different cutoffs for backward selection
+for(cutoff in c(0.1,0.2,0.3,0.4,0.5))
+{
+  yhat1.class = dichotomize(yhat1,cutoff )
+  err = mean(yhat1.class != dat.test$Revenue) # misclassification error rate
+  print(paste((cutoff)))
+  print(err)
+  print(sen(dat.test$Revenue, yhat1.class))
+  print(spe(dat.test$Revenue, yhat1.class))
+  print(confusionMatrix(table(yhat1.class,dat.test$Revenue), positive = "1"))
+  
+}
+
+## Loop for different cutoffs for stepwise selection
+for(cutoff in c(0.1,0.2,0.3,0.4,0.5))
+{
+  yhat2.class = dichotomize(yhat2,cutoff )
+  err = mean(yhat2.class != dat.test$Revenue) # misclassification error rate
+  print(paste((cutoff)))
+  print(err)
+  print(sen(dat.test$Revenue, yhat2.class))
+  print(spe(dat.test$Revenue, yhat2.class))
+  print(confusionMatrix(table(yhat2.class,dat.test$Revenue), positive = "1"))
+  
+}
+
+## Model 1 - Logistic regression ends here ##
+
+###################################################
+
+## Model 2 - Decision Tree (Classification) ##
+## K taken as 20 instead of 10 to increase the accuracy
+
+K=20 #cross validations
+fit <- rpart(Revenue ~ ., data = dat.train, method = "class",cp = 1e-2, minsplit=10, xval=K)
+# Minimum Error Tree
+pfit.me = prune(fit, cp = fit$cptable[which.min(fit$cptable[,"xerror"]),"CP"])
+rpart.plot(pfit.me, main = 'Min Error Tree')
+
+## Best Pruned Tree
+ind = which.min(fit$cptable[,"xerror"]) ## xerror: cross-validation error
+se1 = fit$cptable[ind,"xstd"]/sqrt(K) ## 1 standard error
+xer1 = min(fit$cptable[,"xerror"]) + se1 ## targeted error: min + 1 SE
+ind0 = which.min(fit$cptable[1:ind,"xerror"] - xer1) ## select the tree giving closest xerror to xer1
+pfit.bp = prune(fit, cp = fit$cptable[ind0,"CP"])
+rpart.plot(pfit.bp, main = 'Best Pruned Tree')
+
+## How to predict? I am taking best pruned tree as an example.
+yhat = predict(pfit.bp, dat.test, type = "class") # replace "dat" by validation data if you have it
+err.bp = 1 - mean(yhat == dat.test$Revenue)
+err.bp
+
+data.frame(fit$variable.importance) ## Min tree
+data.frame(pfit.bp$variable.importance) ## Best prune tree
+
+# if you want to use a cutoff not equal to 0.5 for CART
+for(cutoff in c(0.1,0.2,0.3,0.4,0.5))
+{
+  prob1 = predict(pfit.bp, dat.test, type = "prob")[,2]
+  pred.class = as.numeric(prob1 > cutoff)
+  ytest = (dat.test$Revenue) # Be careful! Check the variable type of your outcome
+  err.bp.newCut =mean(pred.class!=ytest)
+  print(cutoff)
+  print(err.bp.newCut)
+  print(sen(ytest,pred.class))
+  print(spe(ytest,pred.class))
+  print(confusionMatrix(table(pred.class,dat.test$Revenue), positive = "1"))
+}
+## Model 2 - Classification Tree ends here ##
+
+###################################################
+
+## KNN classification begins here ##
+## Data is already partitioned into 80:20
+## Run KNN with significant var from logistic regression output and with all variables
+require(class)
+Xtrain = dat3[id.train,c(2,5,7,8,16,21,22)] ## Run KNN with significant variables top 11 from log reg
+Xtest  =  dat3[id.test,c(2,5,7,8,16,21,22)]
+
+Xtrain1 = dat3[id.train, -c(15)]  ## All variables except target var
+Xtest1 = dat3[id.test, -c(15)]
+
+ytrain = dat3[id.train,15]
+ytest = dat3[id.test,15]
+
+get.prob = function(x) {
+  prob = attr(x, 'prob')
+  cl = as.numeric(x)
+  ind = which(cl == 1)
+  prob[ind] = 1 - prob[ind]
+  return(prob)
+}
+
+
+knn.bestK = function(train, test, y.train, y.test, k.grid = 1:50, ct, prob = T) {
+## browser()
+fun.tmp = function(x) {
+    y.tmp = knn(train, test, y.train, k = x, prob=T) ## run knn for each k in k.grid
+    prob = get.prob(y.tmp)
+    y.hat = as.numeric( prob > ct ) + 1
+    return( sum(y.hat != as.numeric(y.test)) )
+  }
+## create a temporary function (fun.tmp) that we want to apply to each value in k.grid
+  error = unlist(lapply(k.grid, fun.tmp))
+  names(error) = paste0('k=', k.grid)
+  ## it will return a list so I need to unlist it to make it to be a vector
+  out = list(k.optimal = k.grid[which.min(error)], 
+             error.min = min(error)/length(y.test),
+             error.all = error/length(y.test))
+  return(out)
+}
+
+objk = knn.bestK(Xtrain, Xtest, ytrain, ytest, seq(1, 50, 2), .5)
+objk # With sig variables
+objk_1 = knn.bestK(Xtrain1, Xtest1, ytrain, ytest, seq(1, 50, 2), .5)
+objk_1  # With all variables
+
+## Rerun with the best k
+ypred1 = knn(Xtrain, Xtest, ytrain, ytest, k=objk$k.optimal, prob=T)
+prec3 <- table(ytest, ypred1)
+prec3
+
+## KNN with significant variables gives less error as compared to all variables
+## Hence we run for different cutoffs with selected columns
+ypred1 = knn(Xtrain, Xtest, ytrain, k=objk$k.optimal,0.5,prob=T)
+for(cutoff in c(0.1,0.2,0.3,0.4,0.5))
+{
+  prob1 = get.prob(ypred1)
+  pred.class = as.numeric(prob1 > cutoff)
+  err =mean(pred.class !=ytest)
+  print(cutoff)
+  print(err)
+  print(sen(ytest, pred.class))
+  print(spe(ytest, pred.class))
+  print(confusionMatrix(table(pred.class,dat.test$Revenue), positive = "1"))
+}
+
+## KNN classification ends here ##
+rm (dat1, dat2)  ## Remove data frames
+############################################################
+## R script ends here 
+############################################################
+
+
